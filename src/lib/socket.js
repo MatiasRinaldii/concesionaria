@@ -1,7 +1,7 @@
 import { io } from 'socket.io-client';
-import { getAccessToken } from './api';
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3001';
+// Socket.io now runs on the same origin as Next.js
+// No need for separate WS_URL - connects to same server
 
 let socket = null;
 let connectionPromise = null;
@@ -14,20 +14,14 @@ export const getSocket = () => {
         return socket;
     }
 
-    const token = getAccessToken();
-
-    if (!token) {
-        console.warn('No token available for socket connection');
-        return null;
-    }
-
-    socket = io(WS_URL, {
-        auth: { token },
-        transports: ['websocket'],
+    // Connect to same origin (unified Next.js + Socket.io server)
+    socket = io({
+        transports: ['websocket', 'polling'],
         reconnection: true,
         reconnectionAttempts: 5,
         reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000
+        reconnectionDelayMax: 5000,
+        autoConnect: false
     });
 
     socket.on('connect', () => {
@@ -63,6 +57,7 @@ export const connectSocket = () => {
             return;
         }
 
+        s.connect();
         s.once('connect', () => resolve(s));
         s.once('connect_error', () => resolve(null));
     });
