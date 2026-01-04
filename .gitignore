@@ -3,6 +3,7 @@ node_modules/
 .pnp
 .pnp.js
 
+
 # Build outputs
 .next/
 out/
@@ -11,7 +12,7 @@ dist/
 
 # Environment variables - NEVER commit secrets!
 .env
-.env.local
+.env.local.example
 .env.development.local
 .env.test.local
 .env.production.local

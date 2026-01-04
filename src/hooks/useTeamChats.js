@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import {
+    connectSocket,
+    getSocket
+} from '../lib/socket';
 
 export function useTeamChats() {
     const [teams, setTeams] = useState([]);
@@ -10,41 +13,35 @@ export function useTeamChats() {
     const [messagesLoading, setMessagesLoading] = useState(false);
     const { user } = useAuth();
 
-    // Fetch teams
+    // Fetch teams via API route
     const fetchTeams = useCallback(async () => {
         if (!user) return;
 
         try {
             setLoading(true);
 
-            const { data, error } = await supabase
-                .from('team_users')
-                .select(`
-                    team_id,
-                    teams(
-                        id, name, description, created_at,
-                        team_users(user_id, users(full_name, avatar_url))
-                    )
-                `)
-                .eq('user_id', user.id);
+            const res = await fetch('/api/teams/user-teams', {
+                credentials: 'include'
+            });
 
-            console.log('👥 fetchTeams response:', { data, error, userId: user.id });
-
-            if (error) {
-                console.error('Supabase error:', error.message, error.details, error.hint);
-                throw error;
+            if (!res.ok) {
+                throw new Error('Error fetching teams');
             }
 
+            const data = await res.json();
+
+            console.log('👥 fetchTeams response:', { data, userId: user.id });
+
             const formattedTeams = (data || []).map(t => ({
-                id: t.teams?.id,
-                name: t.teams?.name,
-                description: t.teams?.description,
-                created_at: t.teams?.created_at,
-                lastMessage: t.teams?.description || 'Team chat',
+                id: t.id,
+                name: t.name,
+                description: t.description,
+                created_at: t.created_at,
+                lastMessage: t.description || 'Team chat',
                 time: '',
                 unread: 0,
                 type: 'group',
-                members: t.teams?.team_users?.map(m => m.users) || []
+                members: t.members || []
             }));
 
             console.log('👥 formattedTeams:', formattedTeams);
@@ -57,7 +54,7 @@ export function useTeamChats() {
         }
     }, [user]);
 
-    // Fetch messages for selected team
+    // Fetch messages for selected team via API route
     const fetchMessages = useCallback(async (teamId) => {
         // Skip if no teamId or if it's a special non-UUID id (like 'vision-ai')
         if (!teamId || !teamId.includes('-') || teamId.length < 30) return;
@@ -65,23 +62,22 @@ export function useTeamChats() {
         try {
             setMessagesLoading(true);
 
-            const { data, error } = await supabase
-                .from('team_messages')
-                .select('*')
-                .eq('team_id', teamId)
-                .order('created_at', { ascending: true });
+            const res = await fetch(`/api/teams/messages?team_id=${teamId}`, {
+                credentials: 'include'
+            });
 
-            if (error) {
-                console.error('Supabase error:', error.message, error.details, error.hint);
-                throw error;
+            if (!res.ok) {
+                throw new Error('Error fetching team messages');
             }
+
+            const data = await res.json();
 
             setMessages((data || []).map(msg => ({
                 id: msg.id,
                 text: msg.message,
                 sender: msg.user_id === user?.id ? 'me' : 'other',
                 senderName: msg.user_name || 'Unknown',
-                senderAvatar: null,
+                senderAvatar: msg.user_avatar || null,
                 time: new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             })));
         } catch (err) {
@@ -91,29 +87,34 @@ export function useTeamChats() {
         }
     }, [user]);
 
-    // Send message
+    // Send message via API route
     const sendMessage = useCallback(async (text) => {
         if (!selectedTeamId || !text?.trim() || !user) return;
 
         try {
-            const { data, error } = await supabase
-                .from('team_messages')
-                .insert({
+            const res = await fetch('/api/teams/messages', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
                     team_id: selectedTeamId,
-                    user_id: user.id,
                     message: text.trim()
                 })
-                .select('*, users(full_name, avatar_url)')
-                .single();
+            });
 
-            if (error) throw error;
+            if (!res.ok) {
+                const errData = await res.json();
+                throw new Error(errData.error || 'Error sending message');
+            }
+
+            const data = await res.json();
 
             setMessages(prev => [...prev, {
                 id: data.id,
                 text: data.message,
                 sender: 'me',
-                senderName: data.users?.full_name || 'Me',
-                senderAvatar: data.users?.avatar_url,
+                senderName: data.user_name || 'Me',
+                senderAvatar: data.user_avatar,
                 time: new Date(data.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             }]);
 
@@ -141,35 +142,44 @@ export function useTeamChats() {
         }
     }, [user, fetchTeams]);
 
-    // Supabase Realtime for team messages
+    // Socket.io for team messages (real-time)
     useEffect(() => {
         if (!selectedTeamId) return;
 
-        const channel = supabase
-            .channel(`team-${selectedTeamId}`)
-            .on('postgres_changes',
-                { event: 'INSERT', schema: 'public', table: 'team_messages', filter: `team_id=eq.${selectedTeamId}` },
-                async (payload) => {
-                    const newMsg = payload.new;
+        let socket = null;
 
-                    // Avoid duplicates
-                    setMessages(prev => {
-                        if (prev.some(m => m.id === newMsg.id)) return prev;
+        const setupSocket = async () => {
+            socket = await connectSocket();
+            if (!socket) return;
 
-                        return [...prev, {
-                            id: newMsg.id,
-                            text: newMsg.message,
-                            sender: newMsg.user_id === user?.id ? 'me' : 'other',
-                            senderName: 'User',
-                            time: new Date(newMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                        }];
-                    });
-                }
-            )
-            .subscribe();
+            // Join team room
+            socket.emit('join_team', selectedTeamId);
+
+            // Listen for new team messages
+            socket.on('team_message', (newMsg) => {
+                // Avoid duplicates
+                setMessages(prev => {
+                    if (prev.some(m => m.id === newMsg.id)) return prev;
+
+                    return [...prev, {
+                        id: newMsg.id,
+                        text: newMsg.message,
+                        sender: newMsg.user_id === user?.id ? 'me' : 'other',
+                        senderName: newMsg.user_name || 'User',
+                        senderAvatar: newMsg.user_avatar || null,
+                        time: new Date(newMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    }];
+                });
+            });
+        };
+
+        setupSocket();
 
         return () => {
-            supabase.removeChannel(channel);
+            if (socket) {
+                socket.emit('leave_team', selectedTeamId);
+                socket.off('team_message');
+            }
         };
     }, [selectedTeamId, user]);
 

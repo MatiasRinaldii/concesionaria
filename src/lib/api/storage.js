@@ -1,61 +1,60 @@
-import { supabase } from '../supabase';
-
 /**
- * Upload a file to Supabase Storage
+ * Upload a file to storage
+ * Uses API route which supports R2 (production) or local filesystem (development)
  */
 export async function uploadFile(file, bucket = 'vehicles') {
     if (!file || !file.name) {
         throw new Error('Invalid file: file object with name property is required');
     }
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-    const filePath = fileName;
 
-    const { data, error } = await supabase.storage
-        .from(bucket)
-        .upload(filePath, file, {
-            cacheControl: '3600',
-            upsert: false
-        });
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('bucket', bucket);
 
-    if (error) throw error;
+    const res = await fetch('/api/upload', {
+        method: 'POST',
+        credentials: 'include',
+        body: formData
+    });
 
-    // Get public URL
-    const { data: { publicUrl } } = supabase.storage
-        .from(bucket)
-        .getPublicUrl(filePath);
+    if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Upload failed');
+    }
 
-    return {
-        path: data.path,
-        url: publicUrl
-    };
+    return res.json();
 }
 
 /**
  * Get public URL for a file
+ * If it's already a URL, returns as-is
+ * Otherwise constructs URL from path
  */
 export function getFileUrl(path, bucket = 'vehicles') {
     if (!path) return null;
 
     // If already a full URL, return as-is
-    if (path.startsWith('http://') || path.startsWith('https://')) {
+    if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('/')) {
         return path;
     }
 
-    const { data: { publicUrl } } = supabase.storage
-        .from(bucket)
-        .getPublicUrl(path);
-
-    return publicUrl;
+    // Construct URL from path - assumes local storage or R2 public URL
+    // In production, R2_PUBLIC_URL would be used by the upload endpoint
+    return `/uploads/${bucket}/${path}`;
 }
 
 /**
- * Delete a file from Supabase Storage
+ * Delete a file from storage
+ * Note: This functionality requires the storage backend to support deletion
  */
 export async function deleteFile(path, bucket = 'vehicles') {
-    const { error } = await supabase.storage
-        .from(bucket)
-        .remove([path]);
+    const res = await fetch(`/api/upload?path=${encodeURIComponent(path)}&bucket=${bucket}`, {
+        method: 'DELETE',
+        credentials: 'include'
+    });
 
-    if (error) throw error;
+    if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Delete failed');
+    }
 }

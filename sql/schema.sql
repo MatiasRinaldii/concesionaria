@@ -1,6 +1,6 @@
 -- ========================================
 -- SCHEMA COMPLETO PARA CONCESIONARIA CRM
--- PostgreSQL Migration from Supabase
+-- PostgreSQL + MinIO + JWT Auth
 -- ========================================
 
 -- Enable UUID extension
@@ -8,7 +8,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ========================================
--- TABLA: users (reemplaza Supabase Auth)
+-- TABLA: users
 -- ========================================
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -68,6 +68,18 @@ CREATE TABLE tags (
 CREATE INDEX idx_tags_name ON tags(name);
 
 -- ========================================
+-- TABLA: car_states (estados de vehículos)
+-- ========================================
+CREATE TABLE car_states (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(100) NOT NULL,
+    color VARCHAR(20) DEFAULT '#5B8DEF',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_car_states_name ON car_states(name);
+
+-- ========================================
 -- TABLA: clients
 -- ========================================
 CREATE TABLE clients (
@@ -77,11 +89,13 @@ CREATE TABLE clients (
     email VARCHAR(255),
     platform VARCHAR(50) DEFAULT 'web' CHECK (platform IN ('web', 'whatsapp', 'instagram', 'facebook', 'email', 'phone')),
     agent VARCHAR(50) DEFAULT 'AI' CHECK (agent IN ('AI', 'human')),
+    bot_enable BOOLEAN DEFAULT TRUE,
     status VARCHAR(50) DEFAULT 'new' CHECK (status IN ('new', 'contacted', 'qualified', 'negotiation', 'won', 'lost')),
     auto_interes TEXT,
     auto_entrega TEXT,
     label_id UUID REFERENCES labels(id) ON DELETE SET NULL,
     assigned_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    last_message TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -132,6 +146,7 @@ CREATE TABLE messages (
     message_file JSONB DEFAULT '[]',
     platform VARCHAR(50) DEFAULT 'web',
     read BOOLEAN DEFAULT FALSE,
+    external_id VARCHAR(255) UNIQUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -140,6 +155,44 @@ CREATE INDEX idx_messages_agent ON messages(agent_id);
 CREATE INDEX idx_messages_created ON messages(created_at DESC);
 CREATE INDEX idx_messages_unread ON messages(session_id, read) WHERE read = FALSE;
 CREATE INDEX idx_messages_platform ON messages(platform);
+CREATE INDEX idx_messages_external ON messages(external_id) WHERE external_id IS NOT NULL;
+
+-- ========================================
+-- TABLA: phone_calls (llamadas telefónicas)
+-- ========================================
+CREATE TABLE phone_calls (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
+    direction VARCHAR(20) DEFAULT 'outbound' CHECK (direction IN ('inbound', 'outbound')),
+    status VARCHAR(50) DEFAULT 'initiated' CHECK (status IN ('initiated', 'ringing', 'answered', 'completed', 'failed', 'missed')),
+    duration INTEGER DEFAULT 0,
+    recording_url TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_phone_calls_client ON phone_calls(client_id);
+CREATE INDEX idx_phone_calls_status ON phone_calls(status);
+CREATE INDEX idx_phone_calls_created ON phone_calls(created_at DESC);
+
+-- ========================================
+-- TABLA: email_messages (mensajes de email)
+-- ========================================
+CREATE TABLE email_messages (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
+    direction VARCHAR(20) DEFAULT 'outbound' CHECK (direction IN ('inbound', 'outbound')),
+    subject TEXT,
+    body TEXT,
+    from_email VARCHAR(255),
+    to_email VARCHAR(255),
+    status VARCHAR(50) DEFAULT 'sent' CHECK (status IN ('draft', 'sent', 'delivered', 'read', 'failed')),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_email_messages_client ON email_messages(client_id);
+CREATE INDEX idx_email_messages_direction ON email_messages(direction);
+CREATE INDEX idx_email_messages_created ON email_messages(created_at DESC);
 
 -- ========================================
 -- TABLA: event_types
@@ -276,13 +329,18 @@ CREATE TRIGGER tr_teams_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER tr_phone_calls_updated_at
+    BEFORE UPDATE ON phone_calls
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
 -- ========================================
 -- FUNCTION: Actualizar client updated_at al recibir mensaje
 -- ========================================
 CREATE OR REPLACE FUNCTION update_client_on_message()
 RETURNS TRIGGER AS $$
 BEGIN
-    UPDATE clients SET updated_at = NOW() WHERE id = NEW.session_id;
+    UPDATE clients SET updated_at = NOW(), last_message = NEW.message WHERE id = NEW.session_id;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -302,23 +360,43 @@ VALUES (
     crypt('admin123', gen_salt('bf')),
     'Administrator',
     'admin'
-);
+) ON CONFLICT (email) DO NOTHING;
 
 -- ========================================
 -- INSERT: Tipos de eventos por defecto
 -- ========================================
 INSERT INTO event_types (name, color) VALUES
     ('Test Drive', '#22C55E'),
-    ('Meeting', '#3B82F6'),
-    ('Follow Up', '#F59E0B'),
-    ('Delivery', '#8B5CF6');
+    ('Reunión', '#3B82F6')
+ON CONFLICT DO NOTHING;
+
+-- ========================================
+-- INSERT: Estados de autos por defecto
+-- ========================================
+INSERT INTO car_states (name, color) VALUES
+    ('Disponible', '#22C55E'),
+    ('Vendido', '#EF4444'),
+    ('Reservado', '#F59E0B')
+ON CONFLICT DO NOTHING;
+
+-- ========================================
+-- INSERT: Labels por defecto
+-- ========================================
+INSERT INTO labels (name, color) VALUES
+    ('No Calificado', '#9CA3AF'),
+    ('Calificado', '#22C55E')
+ON CONFLICT DO NOTHING;
 
 -- ========================================
 -- COMENTARIOS
 -- ========================================
-COMMENT ON TABLE users IS 'Usuarios del sistema (reemplaza Supabase Auth)';
+COMMENT ON TABLE users IS 'Usuarios del sistema con autenticación JWT';
 COMMENT ON TABLE sessions IS 'Sesiones JWT con refresh tokens';
 COMMENT ON TABLE clients IS 'Clientes/leads del CRM';
 COMMENT ON TABLE messages IS 'Mensajes de conversaciones con clientes';
 COMMENT ON TABLE team_messages IS 'Mensajes en chats de equipo interno';
 COMMENT ON TABLE vehicles IS 'Inventario de vehículos';
+COMMENT ON TABLE car_states IS 'Estados posibles para vehículos';
+COMMENT ON TABLE phone_calls IS 'Registro de llamadas telefónicas';
+COMMENT ON TABLE email_messages IS 'Historial de emails con clientes';
+

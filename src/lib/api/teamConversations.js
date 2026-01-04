@@ -1,179 +1,163 @@
-import { supabase } from '../supabase';
-
 /**
- * Get team conversations
+ * Get team conversations for the current user
+ * Uses the new API routes
  */
 export async function getTeamConversations() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return [];
-
-    const { data, error } = await supabase
-        .from('team_users')
-        .select('team_id, teams(*, team_users(user_id, users(full_name, avatar_url)))')
-        .eq('user_id', user.id);
-
-    if (error) throw error;
-    return data?.map(t => t.teams) || [];
+    const res = await fetch('/api/teams/user-teams', { credentials: 'include' });
+    if (!res.ok) throw new Error('Error fetching team conversations');
+    return res.json();
 }
 
 /**
- * Get team messages
+ * Get messages for a team
  */
 export async function getTeamMessages(teamId) {
-    const { data, error } = await supabase
-        .from('team_messages')
-        .select('*, users(full_name, avatar_url)')
-        .eq('team_id', teamId)
-        .order('created_at', { ascending: true });
-
-    if (error) throw error;
-    return data || [];
+    const res = await fetch(`/api/teams/messages?team_id=${teamId}`, { credentials: 'include' });
+    if (!res.ok) throw new Error('Error fetching team messages');
+    return res.json();
 }
 
 /**
- * Send team message
- */
-export async function sendTeamMessage(teamId, message) {
-    const { data: { user } } = await supabase.auth.getUser();
-
-    const { data, error } = await supabase
-        .from('team_messages')
-        .insert({
-            team_id: teamId,
-            user_id: user?.id,
-            message
-        })
-        .select('*, users(full_name, avatar_url)')
-        .single();
-
-    if (error) throw error;
-    return data;
-}
-
-/**
- * Create a team
+ * Create a new team
  */
 export async function createTeam(teamData) {
-    const { data: { user } } = await supabase.auth.getUser();
-
-    // Create team
-    const { data: team, error: teamError } = await supabase
-        .from('teams')
-        .insert({
-            name: teamData.name,
-            description: teamData.description,
-            created_by: user?.id
-        })
-        .select()
-        .single();
-
-    if (teamError) throw teamError;
-
-    // Add members (including creator)
-    const memberIds = [...(teamData.member_ids || []), user?.id];
-    const uniqueIds = [...new Set(memberIds)];
-
-    const members = uniqueIds.map(userId => ({
-        team_id: team.id,
-        user_id: userId
-    }));
-
-    const { error: membersError } = await supabase
-        .from('team_users')
-        .insert(members);
-
-    if (membersError) throw membersError;
-
-    return team;
+    const res = await fetch('/api/teams', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(teamData)
+    });
+    if (!res.ok) throw new Error('Error creating team');
+    return res.json();
 }
 
 /**
  * Delete a team
  */
-export async function deleteTeam(teamId) {
-    const { error } = await supabase
-        .from('teams')
-        .delete()
-        .eq('id', teamId);
+export async function deleteTeam(id) {
+    const res = await fetch(`/api/teams?id=${id}`, {
+        method: 'DELETE',
+        credentials: 'include'
+    });
+    if (!res.ok) throw new Error('Error deleting team');
+}
 
-    if (error) throw error;
+/**
+ * Get team details
+ */
+export async function getTeamDetails(teamId) {
+    const res = await fetch(`/api/teams?id=${teamId}`, { credentials: 'include' });
+    if (!res.ok) throw new Error('Error fetching team details');
+    return res.json();
+}
+
+/**
+ * Send a team message
+ */
+export async function sendTeamMessage(teamId, message) {
+    const res = await fetch('/api/teams/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ team_id: teamId, message })
+    });
+    if (!res.ok) throw new Error('Error sending team message');
+    return res.json();
+}
+
+/**
+ * Add member to team
+ */
+export async function addTeamMember(teamId, userId, role = 'member') {
+    const res = await fetch('/api/teams/members', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ team_id: teamId, user_id: userId, role })
+    });
+    if (!res.ok) throw new Error('Error adding team member');
+    return res.json();
+}
+
+/**
+ * Remove member from team
+ */
+export async function removeTeamMember(teamId, userId) {
+    const res = await fetch(`/api/teams/members?team_id=${teamId}&user_id=${userId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+    });
+    if (!res.ok) throw new Error('Error removing team member');
+}
+
+/**
+ * Check if user has access to team
+ */
+export async function hasTeamAccess(teamId) {
+    try {
+        const res = await fetch(`/api/teams?id=${teamId}`, { credentials: 'include' });
+        return res.ok;
+    } catch {
+        return false;
+    }
 }
 
 /**
  * Get team members
  */
 export async function getTeamMembers(teamId) {
-    const { data, error } = await supabase
-        .from('team_users')
-        .select('user_id, users(id, full_name, avatar_url, email)')
-        .eq('team_id', teamId);
-
-    if (error) throw error;
-    return data?.map(m => m.users) || [];
+    const res = await fetch(`/api/teams/members?team_id=${teamId}`, { credentials: 'include' });
+    if (!res.ok) throw new Error('Error fetching team members');
+    return res.json();
 }
 
 /**
  * Update a team
  */
 export async function updateTeam(teamId, updates) {
-    const { data, error } = await supabase
-        .from('teams')
-        .update(updates)
-        .eq('id', teamId)
-        .select()
-        .single();
-
-    if (error) throw error;
-    return data;
+    const res = await fetch(`/api/teams?id=${teamId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(updates)
+    });
+    if (!res.ok) throw new Error('Error updating team');
+    return res.json();
 }
 
 /**
- * Add a member to a team
- */
-export async function addTeamMember(teamId, userId) {
-    const { error } = await supabase
-        .from('team_users')
-        .insert({ team_id: teamId, user_id: userId });
-
-    if (error) throw error;
-}
-
-/**
- * Remove a member from a team
- */
-export async function removeTeamMember(teamId, userId) {
-    const { error } = await supabase
-        .from('team_users')
-        .delete()
-        .eq('team_id', teamId)
-        .eq('user_id', userId);
-
-    if (error) throw error;
-}
-
-/**
- * Get users that can be added to a team
+ * Get available users for team (users not in the team)
  */
 export async function getAvailableUsersForTeam(teamId) {
-    const { data: { user } } = await supabase.auth.getUser();
+    // Get all users
+    const usersRes = await fetch('/api/users', { credentials: 'include' });
+    if (!usersRes.ok) throw new Error('Error fetching users');
+    const allUsers = await usersRes.json();
 
     // Get current team members
-    const { data: members } = await supabase
-        .from('team_users')
-        .select('user_id')
-        .eq('team_id', teamId);
+    const membersRes = await fetch(`/api/teams/members?team_id=${teamId}`, { credentials: 'include' });
+    if (!membersRes.ok) throw new Error('Error fetching team members');
+    const members = await membersRes.json();
 
-    const memberIds = members?.map(m => m.user_id) || [];
-
-    // Get all users except current members
-    const { data, error } = await supabase
-        .from('users')
-        .select('id, full_name, avatar_url, email')
-        .not('id', 'in', `(${memberIds.join(',')})`);
-
-    if (error) throw error;
-    return data || [];
+    // Filter out users who are already members
+    const memberIds = new Set(members.map(m => m.id));
+    return allUsers.filter(user => !memberIds.has(user.id));
 }
 
-// Alias for backwards compatibility
-export const createTeamGroup = createTeam;
+/**
+ * Legacy alias for createTeam - used by older components
+ */
+export async function createTeamGroup(name, description, memberIds = []) {
+    const team = await createTeam({ name, description });
+
+    // Add members if provided
+    for (const userId of memberIds) {
+        try {
+            await addTeamMember(team.id, userId);
+        } catch (err) {
+            console.warn('Failed to add member:', userId, err);
+        }
+    }
+
+    return team;
+}

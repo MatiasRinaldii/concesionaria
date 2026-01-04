@@ -63,7 +63,7 @@ const Dashboard = () => {
             <div className="p-6">
                 <div className="p-4 bg-red-100 text-red-700 rounded-md border border-red-200">
                     Error loading clients: {error}
-                    <p className="text-sm mt-2">Make sure you have set up Supabase correctly.</p>
+                    <p className="text-sm mt-2">Make sure the database is configured correctly.</p>
                 </div>
             </div>
         );

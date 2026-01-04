@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Search, UserPlus, Loader2, Sparkles } from 'lucide-react';
 import { useTeamChats } from '../../hooks/useTeamChats';
-import { createTeamGroup } from '../../lib/api/teamConversations';
+import { createTeam } from '../../lib/api/teamConversations';
 import Vision from './Vision';
 import CreateTeamModal from './CreateTeamModal';
 import ChatUI from '../customers/chat/ChatUI';
@@ -65,11 +65,11 @@ const Team = () => {
 
     const handleCreateTeam = async (teamName, description, memberIds) => {
         try {
-            await createTeamGroup(teamName, description, memberIds);
+            await createTeam({ name: teamName, description });
             await refreshChats();
         } catch (err) {
             console.error('Error creating team:', err);
-            alert('Error al crear el equipo. Asegúrate de que has ejecutado el script team_groups.sql en Supabase.\n\nError: ' + (err.message || JSON.stringify(err)));
+            alert('Error al crear el equipo.\n\nError: ' + (err.message || JSON.stringify(err)));
             throw err;
         }
     };

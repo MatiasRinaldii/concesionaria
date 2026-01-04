@@ -1,8 +1,7 @@
 /**
  * Utility functions for file operations
+ * PostgreSQL/API-based version - no Supabase dependencies
  */
-
-import { supabase } from '../supabase';
 
 /**
  * Check if a URL points to an image file
@@ -45,7 +44,7 @@ export const getPublicUrl = (path, bucket = 'vehicles') => {
     if (!path) return null;
 
     // If it's already a full URL, return as-is
-    if (path.startsWith('http://') || path.startsWith('https://')) {
+    if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('/')) {
         return path;
     }
 
@@ -57,11 +56,8 @@ export const getPublicUrl = (path, bucket = 'vehicles') => {
     // Remove bucket prefix if present
     const cleanPath = path.replace(`${bucket}/`, '');
 
-    const { data: { publicUrl } } = supabase.storage
-        .from(bucket)
-        .getPublicUrl(cleanPath);
-
-    return publicUrl;
+    // Construct URL - works with both local storage and R2
+    return `/uploads/${bucket}/${cleanPath}`;
 };
 
 /**

@@ -1,42 +1,39 @@
-import { supabase } from '../supabase';
-
 /**
- * Get all phone calls
+ * Get phone calls for a client
  */
-export async function getPhoneCalls() {
-    const { data, error } = await supabase
-        .from('phone_calls')
-        .select('*')
-        .order('created_at', { ascending: false });
+export async function getPhoneCalls(clientId) {
+    let url = '/api/phone-calls';
+    if (clientId) url += `?client_id=${clientId}`;
 
-    if (error) throw error;
-    return data || [];
+    const res = await fetch(url, { credentials: 'include' });
+    if (!res.ok) throw new Error('Error fetching phone calls');
+    return res.json();
 }
 
 /**
- * Get phone calls for a specific client
+ * Create a phone call
  */
-export async function getClientPhoneCalls(clientId) {
-    const { data, error } = await supabase
-        .from('phone_calls')
-        .select('*')
-        .eq('client_id', clientId)
-        .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return data || [];
+export async function createPhoneCall(data) {
+    const res = await fetch('/api/phone-calls', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(data)
+    });
+    if (!res.ok) throw new Error('Error creating phone call');
+    return res.json();
 }
 
 /**
- * Create a new phone call record
+ * Update a phone call
  */
-export async function createPhoneCall(callData) {
-    const { data, error } = await supabase
-        .from('phone_calls')
-        .insert(callData)
-        .select()
-        .single();
-
-    if (error) throw error;
-    return data;
+export async function updatePhoneCall(id, updates) {
+    const res = await fetch(`/api/phone-calls?id=${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(updates)
+    });
+    if (!res.ok) throw new Error('Error updating phone call');
+    return res.json();
 }

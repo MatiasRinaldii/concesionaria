@@ -1,8 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { uploadFile } from '../lib/api/storage';
 import { formatMessageFiles } from '../lib/utils/fileUtils';
+import {
+    connectSocket,
+    getSocket,
+    joinClientRoom,
+    leaveClientRoom,
+    onNewMessage
+} from '../lib/socket';
 
 /**
  * Format a message object for display in the UI
@@ -33,6 +39,7 @@ export function useChats() {
 
     const selectedChatIdRef = useRef(selectedChatId);
     const chatsRef = useRef(chats);
+    const prevSelectedChatIdRef = useRef(null);
 
     useEffect(() => {
         selectedChatIdRef.current = selectedChatId;
@@ -42,38 +49,35 @@ export function useChats() {
         chatsRef.current = chats;
     }, [chats]);
 
-    // Fetch all chats
+    // Fetch all chats via API route
     const fetchChats = useCallback(async (showLoading = true) => {
         try {
             if (showLoading) setLoading(true);
 
-            const { data, error: fetchError } = await supabase
-                .from('clients')
-                .select(`
-                    *,
-                    label:labels!clients_label_id_fkey(*),
-                    tags:tag_client(tag_id, tags(id, name)),
-                    last_message:messages(id, message, message_file, created_at, agent_id)
-                `)
-                .order('created_at', { ascending: false });
+            const res = await fetch('/api/clients', {
+                credentials: 'include'
+            });
 
-            if (fetchError) throw fetchError;
+            if (!res.ok) {
+                throw new Error('Error fetching clients');
+            }
+
+            const data = await res.json();
 
             const formattedChats = (data || []).map(chat => {
-                const lastMsg = chat.last_message?.[0];
                 return {
                     id: chat.id,
                     created_at: chat.created_at,
                     name: chat.name || 'Unknown Client',
-                    lastMessage: lastMsg?.message || (lastMsg?.message_file ? '📎 File' : 'No messages yet'),
-                    time: lastMsg ? new Date(lastMsg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
-                    unread: 0,
+                    lastMessage: chat.last_message || 'No messages yet',
+                    time: chat.updated_at ? new Date(chat.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+                    unread: chat.unread_count || 0,
                     agent: !chat.bot_enable ? 'AI' : 'Human',
                     bot_enable: chat.bot_enable,
                     status: chat.status,
                     platform: chat.platform,
-                    label: chat.label || null,
-                    tags: chat.tags?.map(t => t.tags) || [],
+                    label: chat.label_name ? { name: chat.label_name, color: chat.label_color } : null,
+                    tags: chat.tags || [],
                     clientData: chat
                 };
             });
@@ -88,24 +92,22 @@ export function useChats() {
         }
     }, []);
 
-    // Fetch messages for selected chat
+    // Fetch messages for selected chat via API route
     const fetchMessages = useCallback(async (clientId) => {
         if (!clientId) return;
 
         try {
             setMessagesLoading(true);
 
-            const { data, error: fetchError } = await supabase
-                .from('messages')
-                .select('*, users:agent_id(full_name)')
-                .eq('session_id', clientId)
-                .order('created_at', { ascending: true });
+            const res = await fetch(`/api/messages?client_id=${clientId}`, {
+                credentials: 'include'
+            });
 
-            if (fetchError) {
-                console.error('Supabase error:', fetchError.message, fetchError.details, fetchError.hint);
-                throw fetchError;
+            if (!res.ok) {
+                throw new Error('Error fetching messages');
             }
 
+            const data = await res.json();
             setMessages((data || []).map(formatMessage));
         } catch (err) {
             console.error('Error fetching messages:', err?.message || err);
@@ -114,7 +116,7 @@ export function useChats() {
         }
     }, []);
 
-    // Send message with support for multiple files (images, videos, PDFs, etc.)
+    // Send message with support for multiple files via API route
     const sendMessage = useCallback(async (text, files = []) => {
         const filesArray = Array.isArray(files) ? files : (files ? [files] : []);
         if (!selectedChatIdRef.current || (!text?.trim() && filesArray.length === 0)) return;
@@ -131,20 +133,26 @@ export function useChats() {
                 }
             }
 
-            const { data, error: sendErr } = await supabase
-                .from('messages')
-                .insert({
+            const res = await fetch('/api/messages', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
                     session_id: selectedChatIdRef.current,
                     message: text?.trim() || null,
                     message_file: fileUrls.length > 0 ? fileUrls : [],
                     agent_id: user?.id
                 })
-                .select('*, users:agent_id(full_name)')
-                .single();
+            });
 
-            if (sendErr) throw sendErr;
+            if (!res.ok) {
+                const errData = await res.json();
+                throw new Error(errData.error || 'Error sending message');
+            }
 
-            // Add message to UI
+            const data = await res.json();
+
+            // Add message to UI (optimistic - will also arrive via socket but we dedupe)
             setMessages(prev => [...prev, formatMessage(data)]);
 
             // Update chat list
@@ -188,48 +196,94 @@ export function useChats() {
         fetchChats();
     }, [fetchChats]);
 
-    // Supabase Realtime subscription
+    // Socket.io connection and real-time subscription
     useEffect(() => {
-        const channel = supabase
-            .channel('messages-realtime')
-            .on('postgres_changes',
-                { event: 'INSERT', schema: 'public', table: 'messages' },
-                (payload) => {
-                    const newMsg = payload.new;
+        let unsubNewMessage = null;
+        let unsubChatUpdated = null;
 
-                    // If message is for current chat, add to messages
-                    if (newMsg.session_id === selectedChatIdRef.current) {
-                        setMessages(prev => {
-                            // Avoid duplicates
-                            if (prev.some(m => m.id === newMsg.id)) return prev;
-                            return [...prev, formatMessage(newMsg)];
-                        });
-                    }
+        const setupSocket = async () => {
+            const socket = await connectSocket();
+            if (!socket) {
+                console.warn('Socket.io connection failed, real-time disabled');
+                return;
+            }
 
-                    // Update chat list
-                    setChats(prev => prev.map(chat =>
-                        chat.id === newMsg.session_id
-                            ? {
-                                ...chat,
-                                lastMessage: newMsg.message || '📎 File',
-                                time: new Date(newMsg.created_at).toLocaleTimeString([], {
-                                    hour: '2-digit',
-                                    minute: '2-digit'
-                                }),
-                                unread: chat.id !== selectedChatIdRef.current
-                                    ? (chat.unread || 0) + 1
-                                    : chat.unread
-                            }
-                            : chat
-                    ));
+            console.log('🔌 Socket.io connected for real-time messages');
+
+            // Listen for new messages
+            unsubNewMessage = onNewMessage((newMsg) => {
+                // If message is for current chat, add to messages
+                if (newMsg.session_id === selectedChatIdRef.current) {
+                    setMessages(prev => {
+                        // Avoid duplicates (from optimistic updates)
+                        if (prev.some(m => m.id === newMsg.id)) return prev;
+                        return [...prev, formatMessage(newMsg)];
+                    });
                 }
-            )
-            .subscribe();
+
+                // Update chat list
+                setChats(prev => prev.map(chat =>
+                    chat.id === newMsg.session_id
+                        ? {
+                            ...chat,
+                            lastMessage: newMsg.message || '📎 File',
+                            time: new Date(newMsg.created_at).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            }),
+                            unread: chat.id !== selectedChatIdRef.current
+                                ? (chat.unread || 0) + 1
+                                : chat.unread
+                        }
+                        : chat
+                ));
+            });
+
+            // Listen for chat updates (from webhook)
+            socket.on('chat_updated', (data) => {
+                setChats(prev => prev.map(chat =>
+                    chat.id === data.session_id
+                        ? {
+                            ...chat,
+                            lastMessage: data.last_message,
+                            time: new Date(data.updated_at).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            }),
+                            unread: chat.id !== selectedChatIdRef.current
+                                ? (chat.unread || 0) + 1
+                                : chat.unread
+                        }
+                        : chat
+                ));
+            });
+        };
+
+        setupSocket();
 
         return () => {
-            supabase.removeChannel(channel);
+            if (unsubNewMessage) unsubNewMessage();
+            const socket = getSocket();
+            if (socket) {
+                socket.off('chat_updated');
+            }
         };
     }, []);
+
+    // Join/leave client rooms when selected chat changes
+    useEffect(() => {
+        // Leave previous room
+        if (prevSelectedChatIdRef.current) {
+            leaveClientRoom(prevSelectedChatIdRef.current);
+        }
+
+        // Join new room
+        if (selectedChatId) {
+            joinClientRoom(selectedChatId);
+        }
+
+        prevSelectedChatIdRef.current = selectedChatId;
+    }, [selectedChatId]);
 
     // Get selected chat data
     const selectedChatData = chats.find(c => c.id === selectedChatId) || null;

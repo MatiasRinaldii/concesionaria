@@ -1,134 +1,96 @@
-import { supabase } from '../supabase';
-
 // ============================================
-// LABELS
+// LABELS - Using API Routes
 // ============================================
 
 export async function getLabels() {
-    const { data, error } = await supabase
-        .from('labels')
-        .select('*')
-        .order('name');
-
-    if (error) throw error;
-    return data || [];
+    const res = await fetch('/api/labels', { credentials: 'include' });
+    if (!res.ok) throw new Error('Error fetching labels');
+    return res.json();
 }
 
 export async function createLabel(labelData) {
-    const { data, error } = await supabase
-        .from('labels')
-        .insert(labelData)
-        .select()
-        .single();
-
-    if (error) throw error;
-    return data;
+    const res = await fetch('/api/labels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(labelData)
+    });
+    if (!res.ok) throw new Error('Error creating label');
+    return res.json();
 }
 
 export async function deleteLabel(id) {
-    const { error } = await supabase
-        .from('labels')
-        .delete()
-        .eq('id', id);
-
-    if (error) throw error;
+    const res = await fetch(`/api/labels?id=${id}`, {
+        method: 'DELETE',
+        credentials: 'include'
+    });
+    if (!res.ok) throw new Error('Error deleting label');
 }
 
 // ============================================
-// TAGS
+// TAGS - Using API Routes
 // ============================================
 
 export async function getTags() {
-    const { data, error } = await supabase
-        .from('tags')
-        .select('*')
-        .order('name');
-
-    if (error) throw error;
-    return data || [];
+    const res = await fetch('/api/tags', { credentials: 'include' });
+    if (!res.ok) throw new Error('Error fetching tags');
+    return res.json();
 }
 
 export async function createTag(name) {
-    const { data, error } = await supabase
-        .from('tags')
-        .insert({ name })
-        .select()
-        .single();
-
-    if (error) throw error;
-    return data;
+    const res = await fetch('/api/tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ name })
+    });
+    if (!res.ok) throw new Error('Error creating tag');
+    return res.json();
 }
 
 export async function deleteTag(id) {
-    const { error } = await supabase
-        .from('tags')
-        .delete()
-        .eq('id', id);
-
-    if (error) throw error;
+    const res = await fetch(`/api/tags?id=${id}`, {
+        method: 'DELETE',
+        credentials: 'include'
+    });
+    if (!res.ok) throw new Error('Error deleting tag');
 }
 
 // ============================================
-// NOTES
+// NOTES - Using API Routes
 // ============================================
 
 export async function getNotes(clientId) {
-    const { data, error } = await supabase
-        .from('notes')
-        .select('*, users(full_name)')
-        .eq('client_id', clientId)
-        .order('created_at', { ascending: false });
-
-    if (error) throw error;
-
-    // Flatten user_name
-    return (data || []).map(note => ({
-        ...note,
-        user_name: note.users?.full_name
-    }));
+    const res = await fetch(`/api/notes?client_id=${clientId}`, { credentials: 'include' });
+    if (!res.ok) throw new Error('Error fetching notes');
+    return res.json();
 }
 
 export async function createNote(clientId, message) {
-    const { data: { user } } = await supabase.auth.getUser();
-
-    const { data, error } = await supabase
-        .from('notes')
-        .insert({
-            client_id: clientId,
-            user_id: user?.id || null,
-            message
-        })
-        .select('*, users(full_name)')
-        .single();
-
-    if (error) throw error;
-    return {
-        ...data,
-        user_name: data.users?.full_name
-    };
+    const res = await fetch('/api/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ client_id: clientId, message })
+    });
+    if (!res.ok) throw new Error('Error creating note');
+    return res.json();
 }
 
 export async function deleteNote(id) {
-    const { error } = await supabase
-        .from('notes')
-        .delete()
-        .eq('id', id);
-
-    if (error) throw error;
+    const res = await fetch(`/api/notes?id=${id}`, {
+        method: 'DELETE',
+        credentials: 'include'
+    });
+    if (!res.ok) throw new Error('Error deleting note');
 }
 
 // ============================================
-// USERS (for team creation)
+// USERS - Using API Routes
 // ============================================
 
 export async function getUsers() {
-    const { data: { user } } = await supabase.auth.getUser();
-
-    const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .neq('id', user?.id || '');
-
-    if (error) throw error;
-    return data || [];
+    const res = await fetch('/api/users', { credentials: 'include' });
+    if (!res.ok) throw new Error('Error fetching users');
+    return res.json();
 }

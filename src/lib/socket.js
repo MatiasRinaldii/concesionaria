@@ -82,7 +82,7 @@ export const disconnectSocket = () => {
 export const joinClientRoom = (clientId) => {
     const s = getSocket();
     if (s) {
-        s.emit('join_client', clientId);
+        s.emit('join-client', clientId);
     }
 };
 
@@ -92,7 +92,7 @@ export const joinClientRoom = (clientId) => {
 export const leaveClientRoom = (clientId) => {
     const s = getSocket();
     if (s) {
-        s.emit('leave_client', clientId);
+        s.emit('leave-client', clientId);
     }
 };
 
@@ -102,7 +102,7 @@ export const leaveClientRoom = (clientId) => {
 export const joinTeamRoom = (teamId) => {
     const s = getSocket();
     if (s) {
-        s.emit('join_team', teamId);
+        s.emit('join-team', teamId);
     }
 };
 
@@ -112,7 +112,7 @@ export const joinTeamRoom = (teamId) => {
 export const leaveTeamRoom = (teamId) => {
     const s = getSocket();
     if (s) {
-        s.emit('leave_team', teamId);
+        s.emit('leave-team', teamId);
     }
 };
 

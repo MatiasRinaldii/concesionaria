@@ -1,47 +1,36 @@
-import { supabase } from '../supabase';
-
 /**
- * Get all email messages
+ * Get email messages for a client
  */
-export async function getEmailMessages() {
-    const { data, error } = await supabase
-        .from('email_messages')
-        .select('*')
-        .order('created_at', { ascending: false });
+export async function getEmailMessages(clientId) {
+    let url = '/api/email-messages';
+    if (clientId) url += `?client_id=${clientId}`;
 
-    console.log('📧 getEmailMessages response:', { data, error });
-
-    if (error) {
-        console.error('Email messages error:', error);
-        throw error;
-    }
-    return data || [];
+    const res = await fetch(url, { credentials: 'include' });
+    if (!res.ok) throw new Error('Error fetching email messages');
+    return res.json();
 }
 
 /**
- * Get email messages for a specific client
+ * Create an email message
  */
-export async function getClientEmails(clientId) {
-    const { data, error } = await supabase
-        .from('email_messages')
-        .select('*')
-        .eq('client_id', clientId)
-        .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return data || [];
+export async function createEmailMessage(data) {
+    const res = await fetch('/api/email-messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(data)
+    });
+    if (!res.ok) throw new Error('Error creating email message');
+    return res.json();
 }
 
 /**
- * Create a new email message
+ * Send an email (alias for createEmailMessage with direction=outbound)
  */
-export async function createEmailMessage(emailData) {
-    const { data, error } = await supabase
-        .from('email_messages')
-        .insert(emailData)
-        .select()
-        .single();
-
-    if (error) throw error;
-    return data;
+export async function sendEmail(data) {
+    return createEmailMessage({
+        ...data,
+        direction: 'outbound',
+        status: 'sent'
+    });
 }

@@ -1,25 +1,17 @@
-import { supabase } from '../supabase';
-
 /**
  * Fetch all clients from the database
  * @returns {Promise<Array>} Array of client objects
  */
 export async function getClients() {
-    const { data, error } = await supabase
-        .from('clients')
-        .select(`
-            *,
-            label:labels!clients_label_id_fkey(*),
-            tags:tag_client(tag_id, tags(id, name))
-        `)
-        .order('created_at', { ascending: false });
+    const res = await fetch('/api/clients', { credentials: 'include' });
+    if (!res.ok) throw new Error('Error fetching clients');
+    const data = await res.json();
 
-    if (error) throw error;
-
-    // Flatten tags
+    // Map to expected format
     return (data || []).map(client => ({
         ...client,
-        tags: client.tags?.map(t => t.tags) || []
+        label: client.label_name ? { name: client.label_name, color: client.label_color } : null,
+        tags: client.tags || []
     }));
 }
 
@@ -29,21 +21,17 @@ export async function getClients() {
  * @returns {Promise<Object>} Client object
  */
 export async function getClient(id) {
-    const { data, error } = await supabase
-        .from('clients')
-        .select(`
-            *,
-            label:labels!clients_label_id_fkey(*),
-            tags:tag_client(tag_id, tags(id, name))
-        `)
-        .eq('id', id)
-        .single();
+    const res = await fetch(`/api/clients?id=${id}`, { credentials: 'include' });
+    if (!res.ok) throw new Error('Error fetching client');
+    const data = await res.json();
 
-    if (error) throw error;
+    // If array, get first item
+    const client = Array.isArray(data) ? data[0] : data;
 
     return {
-        ...data,
-        tags: data.tags?.map(t => t.tags) || []
+        ...client,
+        label: client?.label_name ? { name: client.label_name, color: client.label_color } : null,
+        tags: client?.tags || []
     };
 }
 
@@ -53,14 +41,14 @@ export async function getClient(id) {
  * @returns {Promise<Object>} Created client
  */
 export async function createClient(clientData) {
-    const { data, error } = await supabase
-        .from('clients')
-        .insert(clientData)
-        .select()
-        .single();
-
-    if (error) throw error;
-    return data;
+    const res = await fetch('/api/clients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(clientData)
+    });
+    if (!res.ok) throw new Error('Error creating client');
+    return res.json();
 }
 
 /**
@@ -70,15 +58,14 @@ export async function createClient(clientData) {
  * @returns {Promise<Object>} Updated client
  */
 export async function updateClient(id, updates) {
-    const { data, error } = await supabase
-        .from('clients')
-        .update(updates)
-        .eq('id', id)
-        .select()
-        .single();
-
-    if (error) throw error;
-    return data;
+    const res = await fetch(`/api/clients?id=${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(updates)
+    });
+    if (!res.ok) throw new Error('Error updating client');
+    return res.json();
 }
 
 /**
@@ -87,12 +74,11 @@ export async function updateClient(id, updates) {
  * @returns {Promise<void>}
  */
 export async function deleteClient(id) {
-    const { error } = await supabase
-        .from('clients')
-        .delete()
-        .eq('id', id);
-
-    if (error) throw error;
+    const res = await fetch(`/api/clients?id=${id}`, {
+        method: 'DELETE',
+        credentials: 'include'
+    });
+    if (!res.ok) throw new Error('Error deleting client');
 }
 
 /**
@@ -101,12 +87,13 @@ export async function deleteClient(id) {
  * @param {Array<string>} tagIds - Array of tag IDs
  */
 export async function addTagsToClient(clientId, tagIds) {
-    const inserts = tagIds.map(tag_id => ({ client_id: clientId, tag_id }));
-    const { error } = await supabase
-        .from('tag_client')
-        .insert(inserts);
-
-    if (error) throw error;
+    const res = await fetch('/api/clients/tags', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ client_id: clientId, tag_ids: tagIds })
+    });
+    if (!res.ok) throw new Error('Error adding tags to client');
 }
 
 /**
@@ -115,11 +102,9 @@ export async function addTagsToClient(clientId, tagIds) {
  * @param {string} tagId - Tag ID
  */
 export async function removeTagFromClient(clientId, tagId) {
-    const { error } = await supabase
-        .from('tag_client')
-        .delete()
-        .eq('client_id', clientId)
-        .eq('tag_id', tagId);
-
-    if (error) throw error;
+    const res = await fetch(`/api/clients/tags?client_id=${clientId}&tag_id=${tagId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+    });
+    if (!res.ok) throw new Error('Error removing tag from client');
 }

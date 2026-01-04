@@ -1,8 +1,15 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { supabase } from '../lib/supabase';
-import { User } from '@supabase/supabase-js';
+import { connectSocket, disconnectSocket } from '../lib/socket';
+
+interface User {
+    id: string;
+    email: string;
+    full_name?: string;
+    role?: string;
+    avatar_url?: string;
+}
 
 interface AuthContextType {
     user: User | null;
@@ -26,61 +33,90 @@ interface AuthProviderProps {
     children: ReactNode;
 }
 
+// PostgreSQL/JWT Auth Provider
 export const AuthProvider = ({ children }: AuthProviderProps) => {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        // Get initial session
-        supabase.auth.getSession().then(({ data: { session } }) => {
-            setUser(session?.user ?? null);
-            setLoading(false);
-        });
-
-        // Listen for auth changes
-        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-            setUser(session?.user ?? null);
-        });
-
-        return () => subscription.unsubscribe();
+        // Check if user is logged in on mount
+        checkAuth();
     }, []);
 
+    useEffect(() => {
+        // Connect/disconnect socket based on auth state
+        if (user) {
+            connectSocket();
+        } else {
+            disconnectSocket();
+        }
+    }, [user]);
+
+    const checkAuth = async () => {
+        try {
+            const res = await fetch('/api/auth/me', {
+                credentials: 'include'
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setUser(data.user);
+            } else {
+                setUser(null);
+            }
+        } catch {
+            setUser(null);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const signIn = async (email: string, password: string) => {
-        const { data, error } = await supabase.auth.signInWithPassword({
-            email,
-            password
+        const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password }),
+            credentials: 'include'
         });
-        if (error) throw error;
+
+        if (!res.ok) {
+            const error = await res.json();
+            throw new Error(error.error || 'Error al iniciar sesión');
+        }
+
+        const data = await res.json();
+        setUser(data.user);
         return data;
     };
 
     const signUp = async (email: string, password: string, fullName?: string) => {
-        const { data, error } = await supabase.auth.signUp({
-            email,
-            password,
-            options: {
-                data: { full_name: fullName }
-            }
+        const res = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password, full_name: fullName }),
+            credentials: 'include'
         });
-        if (error) throw error;
+
+        if (!res.ok) {
+            const error = await res.json();
+            throw new Error(error.error || 'Error al registrarse');
+        }
+
+        const data = await res.json();
+        setUser(data.user);
         return data;
     };
 
     const signOut = async () => {
-        const { error } = await supabase.auth.signOut();
-        if (error) throw error;
-    };
-
-    const value: AuthContextType = {
-        user,
-        loading,
-        signIn,
-        signUp,
-        signOut
+        await fetch('/api/auth/logout', {
+            method: 'POST',
+            credentials: 'include'
+        });
+        setUser(null);
+        disconnectSocket();
     };
 
     return (
-        <AuthContext.Provider value={value}>
+        <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut }}>
             {children}
         </AuthContext.Provider>
     );
